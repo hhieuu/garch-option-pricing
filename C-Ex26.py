@@ -112,7 +112,7 @@ m = 1000
 k = 5
 
 # load DAX time series
-dax = np.flip(np.genfromtxt('.\Data\dax_data.csv', delimiter=';', skip_header=1, usecols=4))
+dax = np.flip(np.genfromtxt('dax_data.csv', delimiter=';', skip_header=1, usecols=4))
 # compute log returns
 x = np.diff(np.log(dax))
 
