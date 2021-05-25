@@ -30,12 +30,9 @@ def compute_sigma_at_t(theta, sigma_sq_prev, xi_prev):
     
     Param
     -----
-    theta: Tuple(Float, Float, Float, Float)
-        GARCH(1, 1) parameter: (alpha_0, alpha_1, beta_1, standard deviation sigma (not used))
+    theta: Tuple(Float, Float, Float, Float, Float)
+        GARCH(1, 1) parameter: (alpha_0, alpha_1, beta_1, risk premium lambda, standard deviation sigma (not used))
     
-    lamd: Float
-        Risk-premium
-        
     sigma_prev: Float
         Conditional variance at t - 1
             
@@ -60,8 +57,8 @@ def compute_sigma_sq_historic(theta, risk_free_rate, return_array):
     Param
     -----
     theta: Tuple(Float, Float, Float, Float, Float)
-        GARCH(1, 1) parameter: (alpha_0, alpha_1, beta_1, risk premium lambda, initial standard deviation sigma)
-        
+        GARCH(1, 1) parameter: (alpha_0, alpha_1, beta_1, risk premium lambda, standard deviation sigma)
+               
     risk_free_rate: float
         risk free rate
         
@@ -104,10 +101,15 @@ def neg_log_likelihood_GARCH_11(theta, risk_free_rate, return_array):
     
     Param
     -----
-    theta: Tuple(Float, Float, Float, Float)
-        GARCH(1, 1) parameter: (alpha_0, alpha_1, beta_1, initial standard deviation sigma)
+    theta: Tuple(Float, Float, Float, Float, Float)
+        GARCH(1, 1) parameter: (alpha_0, alpha_1, beta_1, risk premium lambda, standard deviation sigma)
         
     x: ndarray
+    
+    Return
+    ------
+    Float
+        Negative log-likelihood of GARCH(1, 1 function)
         
     """
     # number of observations
@@ -122,6 +124,28 @@ def neg_log_likelihood_GARCH_11(theta, risk_free_rate, return_array):
 
 
 def estimate_GARCH_11_theta(return_array, risk_free_rate):
+    """
+    Estimates parameters of GARCH(1, 1) by Maximum Likelihood Estimation and Scipy's minimization implementation
+    
+    Param
+    -----
+    return_array: ndarray
+        Array of returns
+        
+    risk_free_rate: Float
+        Given return rate of risk-free asset
+        
+    Return
+    ------
+    Tuple(Float, Float, Float, Float, Float)
+        Estimation result for given data and risk free rate.
+        Elements are: 
+            - alpha_0: bias term, 
+            - alpha_1: coefficient of heteroskedastic component,
+            - beta_1: coefficient of auto-regressive component,
+            - lambda: risk premium
+            - sigma_0: initial standard deviation (s.d. at time 0)
+    """
     # initial theta parameters
     theta_sigma1_0 = np.array([0.01, 0.2, 0.8, 0.01, np.std(return_array)])
 
@@ -141,6 +165,9 @@ def estimate_GARCH_11_theta(return_array, risk_free_rate):
 
 
 class IterationCounter:
+    """
+    Class to monitor optimization process by calculating and logging out 
+    """
     def __init__(self, risk_free_rate, return_array):
         self.num_it = 0
         # time
@@ -179,7 +206,7 @@ class IterationCounter:
         print(f"-- beta_1                 : {current_theta[2]:.6f}")
         print(f"-- lambda                 : {current_theta[3]:.6f}")
         print(f"-- init_sigma             : {current_theta[4]:.6f}")
-
+        
 
 if __name__ == '__main__':
     # get data
