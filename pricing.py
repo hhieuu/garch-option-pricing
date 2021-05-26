@@ -62,7 +62,7 @@ def compute_GARCH_price(theta,
         sigma_sq_array[t, :] = a0 \
                              + a1 * (xi_array[t - 1, :] - lamb * np.sqrt(sigma_sq_array[t - 1, :])) ** 2 \
                              + b1 * sigma_sq_array[t - 1, :] # sigma_sq at t
-        xi_array[t, :] = xi_array[t, :] * sigma_sq_array[t, :] # xi at t
+        xi_array[t, :] = xi_array[t, :] * np.sqrt(sigma_sq_array[t, :]) # xi at t
     
     # compute s-period-ahead price for num_simulations
     price_array = init_price * np.exp(num_periods * risk_free_rate \
@@ -80,9 +80,10 @@ def compute_GARCH_call_price(sim_price_array,
     """
     Compute price of Call option
     """
-    expected_price = np.mean(np.maximum(sim_price_array - strike_price, 0))
-    call_price = np.exp(-num_periods * risk_free_rate) * expected_price
-    return call_price
+    expected_price_array = np.maximum(sim_price_array - strike_price, 0)
+    call_price_array = np.exp(-num_periods * risk_free_rate) * expected_price_array
+    call_price = np.mean(call_price_array)
+    return call_price, call_price_array
 
 
 @jit(nopython=True)
@@ -95,9 +96,10 @@ def compute_GARCH_delta(sim_price_array,
     Compute Greek Delta
     """
     mask_array = np.where(sim_price_array >= strike_price, 1, 0)
-    expected_value = np.mean(sim_price_array / current_price * mask_array)
-    delta = np.exp(-num_periods * risk_free_rate) * expected_value
-    return delta
+    expected_value_array = sim_price_array / current_price * mask_array
+    delta_array = np.exp(-num_periods * risk_free_rate) * expected_value_array
+    delta = np.mean(delta_array)
+    return delta, delta_array
 
 
 # Black Scholes formula
@@ -113,7 +115,7 @@ def compute_d_t(theta,
     a0, a1, b1, lamb, sigma0 = theta
     
     sigma_sq = a0 / (1 - a1 - b1)
-    d_t_denom = np.exp(current_price / strike_price) + (risk_free_rate + sigma_sq / 2) * num_periods
+    d_t_denom = np.log(current_price / strike_price) + (risk_free_rate + sigma_sq / 2) * num_periods
     d_t = d_t_denom / np.sqrt(sigma_sq * num_periods)
     
     return d_t, sigma_sq
