@@ -5,6 +5,7 @@ from numba import jit
 from utils import normal_pdf
 from scipy.stats import norm
 
+from copy import deepcopy
 
 @jit(nopython=True)
 def compute_GARCH_price(theta, 
@@ -33,7 +34,7 @@ def compute_GARCH_price(theta,
         Conditional standard deviation at time t
         
     risk_free_rate: Float
-        Return of risk-free asset. If theta is estimated with a certain risk-free-rate,
+        Yearly return of risk-free asset. If theta is estimated with a certain risk-free-rate,
         then that rate should be given here.
         
     num_simulation: Int
@@ -51,10 +52,11 @@ def compute_GARCH_price(theta,
     
     # set initial values
     # variance sigma_sq_t
-    sigma_sq_array = np.zeros(shape=(num_periods, num_simulations))
+    shape = (num_periods, num_simulations)
+    sigma_sq_array = np.zeros(shape=shape)
     sigma_sq_array[0, :] = init_sigma ** 2
     # innovation xi_t
-    xi_array = np.random.standard_normal(size=(num_periods, num_simulations))
+    xi_array = np.random.standard_normal(size=shape)
     xi_array[0, :] = xi_array[0, :] * init_sigma
     
     # compute sigma_sq and xi iteratively for num_period
@@ -63,7 +65,7 @@ def compute_GARCH_price(theta,
                              + a1 * (xi_array[t - 1, :] - lamb * np.sqrt(sigma_sq_array[t - 1, :])) ** 2 \
                              + b1 * sigma_sq_array[t - 1, :] # sigma_sq at t
         xi_array[t, :] = xi_array[t, :] * np.sqrt(sigma_sq_array[t, :]) # xi at t
-    
+        
     # compute s-period-ahead price for num_simulations
     price_array = init_price * np.exp(num_periods * risk_free_rate \
                                       - 1/2 * np.sum(sigma_sq_array, axis=0) \
@@ -97,14 +99,14 @@ def compute_GARCH_delta(sim_price_array,
     """
     mask_array = np.where(sim_price_array >= strike_price, 1, 0)
     expected_value_array = sim_price_array / current_price * mask_array
-    delta_array = np.exp(-num_periods * risk_free_rate) * expected_value_array
+    delta_array = np.exp(-num_periods  * risk_free_rate) * expected_value_array
     delta = np.mean(delta_array)
     return delta, delta_array
 
 
 # Black Scholes formula
 # @jit(nopython=True)
-def compute_d_t(theta,
+def compute_d_t(sigma_sq,
                 current_price,
                 strike_price,
                 risk_free_rate,
@@ -112,17 +114,14 @@ def compute_d_t(theta,
     """
     Compute d_t for Black-Scholes option pricing formular in GARCH framework
     """
-    a0, a1, b1, lamb, sigma0 = theta
-    
-    sigma_sq = a0 / (1 - a1 - b1)
-    d_t_denom = np.log(current_price / strike_price) + (risk_free_rate + sigma_sq / 2) * num_periods
+    d_t_denom = np.log(current_price / strike_price) + (risk_free_rate  + sigma_sq / 2) * (num_periods)
     d_t = d_t_denom / np.sqrt(sigma_sq * num_periods)
     
-    return d_t, sigma_sq
+    return d_t
     
 
 # @jit(nopython=True)
-def compute_BS_call_price(theta,
+def compute_BS_call_price(sigma_sq,
                           current_price,
                           strike_price,
                           risk_free_rate,
@@ -130,9 +129,9 @@ def compute_BS_call_price(theta,
     """
     Compute call price using Black-Scholes option pricing model in GARCH framework
     """
-    d_t, sigma_sq = compute_d_t(theta, current_price, strike_price, risk_free_rate, num_periods)
+    d_t = compute_d_t(sigma_sq, current_price, strike_price, risk_free_rate, num_periods)
     call_price = current_price * norm.cdf(d_t) \
-                - np.exp(-num_periods * risk_free_rate) \
+                - np.exp(-num_periods  * risk_free_rate) \
                 * strike_price \
                 * norm.cdf(d_t - np.sqrt(sigma_sq * num_periods))
     
@@ -140,7 +139,7 @@ def compute_BS_call_price(theta,
     
     
 # @jit(nopython=True)
-def compute_BS_delta(theta,
+def compute_BS_delta(sigma_sq,
                      current_price,
                      strike_price,
                      risk_free_rate,
@@ -148,18 +147,85 @@ def compute_BS_delta(theta,
     """
     Compute call price using Black-Scholes option pricing model in GARCH framework
     """
-    d_t, _ = compute_d_t(theta, current_price, strike_price, risk_free_rate, num_periods)
+    d_t = compute_d_t(sigma_sq, current_price, strike_price, risk_free_rate, num_periods)
     return norm.cdf(d_t)
 
+
+
+# calculate implied volatility
+# @jit(nopython=True)
+def compute_BS_vega(sigma_sq,
+                    current_price,
+                    strike_price,
+                    risk_free_rate,
+                    num_periods):
+    """
+    Compute the Greek Vega
+    """
+    d_t = compute_d_t(sigma_sq,
+                      current_price,
+                      strike_price,
+                      risk_free_rate,
+                      num_periods)
+    vega = current_price * norm.pdf(d_t) * np.sqrt(num_periods)
+    return vega
+
+
+def compute_BS_implied_volatility(call_option_price,
+                                  current_price,
+                                  strike_price,
+                                  risk_free_rate,
+                                  num_periods,
+                                  tolerance=1e-5,
+                                  max_iterations=1e5):
+    """
+    Compute implied volatility using Newton Method for finding root
+    """
+    i = 0 # iteration counter
+    sigma_sq = 0.05 # initial value for guessing
+    epsilon = 10000 # initial difference between guess and current value
+    
+    # run until either next guess is very close to current value, max iter is met
+    while (epsilon > tolerance) or (i > max_iterations):
+        old_sigma_sq = deepcopy(sigma_sq) # save for calucating next step
+
+        old_call_price = compute_BS_call_price(sigma_sq, 
+                                                current_price, 
+                                                strike_price, 
+                                                risk_free_rate, 
+                                                num_periods)
+        price_diff = old_call_price - call_option_price
+        old_vega = compute_BS_vega(sigma_sq, # first derivative of call w.r.t sigma
+                                    current_price, 
+                                    strike_price, 
+                                    risk_free_rate, 
+                                    num_periods)
+        # update sigma_sq
+        sigma_sq = sigma_sq - 0.01 * price_diff / old_vega # avoid overshoot making sigma_sq negative
+        
+        # Sigma must be non-negative and finite
+        if sigma_sq <= 0 or np.isnan(sigma_sq) or np.isinf(sigma_sq):
+            sigma_sq = old_sigma_sq
+            break
+        
+        # update stop conditions
+        epsilon = np.abs((old_sigma_sq - sigma_sq) / old_sigma_sq)
+        i += 1
+    
+    print(f"Root found @ iteration {i}, epsilon {epsilon:.6f}, sigma_sq {sigma_sq:.6f}")
+    
+    return sigma_sq
+        
 
 if __name__ == "__main__":
     # theta_hat = (0.01, 0.15, 0.7, 0.02, 0.02)
     theta_name = ("alpha_0", "alpha_1", "beta_1", "lambda", "sigma_0")
     theta_hat = (1.00000000e-04, 2.36543920e-01, 5.80094456e-01, 8.17288812e-01, 1.14291781e-02)
+    bs_sigma_sq = theta_hat[0] / (1 - theta_hat[1] - theta_hat[2])
     price_at_t = 100
     strike_price = 105
     sigma_at_t = 0.04
-    risk_free_rate = 0.001
+    risk_free_rate = 0.001 / 365
     num_simulations = 100000
     t = 0
     T = 90
@@ -192,32 +258,52 @@ if __name__ == "__main__":
     call_price = compute_GARCH_call_price(sim_price_array,
                                           strike_price,
                                           T - t,
-                                          risk_free_rate)
+                                          risk_free_rate)[0]
     print(f"GARCH call price              : {call_price:.4f}")
     
     call_delta = compute_GARCH_delta(sim_price_array,
                                      strike_price,
                                      price_at_t,
                                      T - t,
-                                     risk_free_rate)
+                                     risk_free_rate)[0]
     print(f"GARCH call delta              : {call_delta:.4f}")
     
     print()
     print(f"=== BS PRICING RESULTS ==================")
-    bs_call_price = compute_BS_call_price(theta_hat,
+    print(f"Black-Scholes variance        : {bs_sigma_sq:.4f}")
+    bs_call_price = compute_BS_call_price(bs_sigma_sq,
                                           price_at_t,
                                           strike_price,
                                           risk_free_rate,
                                           T - t)
     print(f"Black-Scholes call price      : {bs_call_price:.4f}")
     
-    bs_delta = compute_BS_delta(theta_hat,
+    bs_delta = compute_BS_delta(bs_sigma_sq,
                                 price_at_t,
                                 strike_price,
                                 risk_free_rate,
                                 T - t)
     print(f"Black-Scholes delta           : {bs_delta:.4f}")
     
+    bs_vega = compute_BS_vega(bs_sigma_sq,
+                                price_at_t,
+                                strike_price,
+                                risk_free_rate,
+                                T - t)
+    print(f"Black-Scholes vega            : {bs_vega:.4f}")
+    
+    
+    #### implied vol
+    print(price_at_t)
+    print(bs_call_price)
+    
+    GARCH_implied_volatility = compute_BS_implied_volatility(call_option_price=bs_call_price,
+                                                             current_price=price_at_t,
+                                                             strike_price=strike_price,
+                                                             risk_free_rate=risk_free_rate,
+                                                             num_periods=T - t)
+    print(GARCH_implied_volatility)
+    print(bs_sigma_sq)
     
     
     
