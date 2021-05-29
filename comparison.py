@@ -1,7 +1,11 @@
 import math
+import os
+import pathlib
 
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 import garch as g
 import garch_const_lambda as gc
@@ -27,7 +31,6 @@ def compare(theta_hat,
     BS_sigma_sq = a0 / (1 - a1 - b1) # Black scholes' sigma squared
     GARCH_stationary_variance = a0 / (1 - (1 + risk_premium ** 2) * a1 - b1) # stationary variance under GARCH and Local Risk Neutralization
     GARCH_sigma_t = conditional_volatility_ratio * np.sqrt(GARCH_stationary_variance) # conditional variance
-    print("GARCH_sigma_t", GARCH_sigma_t)
     GARCH_asset_price_array_T, _, _ = p.compute_GARCH_price(theta=theta_hat,
                                                             num_periods=num_periods,
                                                             init_price=asset_price_t,
@@ -35,7 +38,6 @@ def compare(theta_hat,
                                                             risk_free_rate=risk_free_rate,
                                                             num_simulations=num_simulations)
     GARCH_asset_price_T = np.mean(GARCH_asset_price_array_T)
-    print(GARCH_asset_price_T)
     # strike_price = GARCH_asset_price_T / moneyness
     
     # GARCH option pricing
@@ -66,6 +68,15 @@ def compare(theta_hat,
     # option delta
     delta_bias_percent_mean = np.mean((GARCH_call_delta_array - BS_call_delta) / BS_call_delta * 100)
     delta_bias_percent_std = np.std((GARCH_call_delta_array - BS_call_delta) / BS_call_delta)
+    
+    # implied volatility
+    GARCH_iv = p.compute_BS_implied_volatility(call_option_price=GARCH_call_price,
+                                               current_price=asset_price_t,
+                                               strike_price=strike_price,
+                                               risk_free_rate=risk_free_rate,
+                                               num_periods=num_periods,
+                                               tolerance=1e-5,
+                                               max_iterations=1e5)    
     # result as dict for easy DF later
     result = {
         "t": t,
@@ -84,6 +95,7 @@ def compare(theta_hat,
         "delta_GARCH": GARCH_call_delta,
         "delta_bias_mean": delta_bias_percent_mean,
         "delta_bias_std": delta_bias_percent_std,
+        "iv_GARCH": np.sqrt(GARCH_iv)
     }
     
     return result
@@ -91,10 +103,11 @@ def compare(theta_hat,
 
 def main():
     # get data, using BMW data
-    price_df = pd.read_csv('data/BMW.csv',
-                             sep=';',
-                             decimal=',',
-                             parse_dates=['Datum'])
+    data_path = 'data/dax_data.csv'
+    price_df = pd.read_csv(data_path,
+                           sep=';',
+                           decimal=',',
+                           parse_dates=['Datum'])
     
     price_array = price_df['Schlusskurs'].astype(float).values
     price_array = np.flip(price_array)[-500:]
@@ -122,7 +135,7 @@ def main():
     # set up context for comparison
     t = 0 # current time wrt call option creation date
     T_comp = (30, 90, 180) # option lengths
-    moneyness_comp = (.8, .9, .95, 1.0, 1.05, 1.1, 1.2) # asset price at T / strike price
+    moneyness_comp = np.arange(0.7, 1.3, 0.002) # asset price at T / strike price
     volatility_ratio = (0.8, 1.0, 1.2) # sqrt(h_t) / stationary sigma
     settings = []
     for _T in T_comp:
@@ -146,30 +159,69 @@ def main():
         print(res)
         result_list.append(res)
     
-    result_df = pd.DataFrame(result_list)
-    result_df = result_df.groupby(['T', 'moneyness', 'conditional_volatility_ratio', 'price_BS', 'delta_BS']).mean()
-    print(result_df)
+    result_df = pd.DataFrame(result_list,)
     result_df = (result_df
-                .reset_index(2)
-                .drop('t', axis=1)
-                .pivot(columns='conditional_volatility_ratio')
-                .reorder_levels([1, 0], axis=1)
-                .sort_index(axis=1, level=0)
-                )
-    print(result_df.filter(like='0.8', axis=1))
-    print(result_df.filter(like='1.0', axis=1))
-    print(result_df.filter(like='1.2', axis=1))
+                 .set_index(['T', 'moneyness', 'conditional_volatility_ratio', 'price_BS', 'delta_BS'])
+                 )
+    result_df_save = (result_df
+                      .reset_index(2)
+                      .drop('t', axis=1)
+                      .pivot(columns='conditional_volatility_ratio')
+                      .reorder_levels([1, 0], axis=1)
+                      .sort_index(axis=1, level=0)
+                      )
+    print(result_df_save.filter(like='0.8', axis=1))
+    print(result_df_save.filter(like='1.0', axis=1))
+    print(result_df_save.filter(like='1.2', axis=1))    
     
-    # GARCH_implied_volatility = p.compute_BS_implied_volatility(call_option_price=call_price,
-    #                                                         current_price=price_at_t,
-    #                                                         strike_price=strike_price,
-    #                                                         risk_free_rate=risk_free_rate,
-    #                                                         num_periods=T - t)
-    # print(GARCH_implied_volatility)
+    # save to csv
+    data_folder, data_filename = data_path.split('/')
+    result_filename = 'result_' + data_filename
+    result_path = os.path.join(data_folder, result_filename)
+    result_df_save.to_csv(result_path, sep='\t')
     
-    
-    # result_df.to_csv('data/result.csv', sep='\t', index=True)
-    return result_df
+    # plot implied volatility
+    # prepare data to plot
+    iv_df_low_vol = (result_df
+                    .reset_index()
+                    [result_df.reset_index()['conditional_volatility_ratio'] == 0.8]
+                    [["T", "conditional_volatility_ratio", "moneyness", "iv_GARCH"]])
+    iv_df_high_vol = (result_df
+                      .reset_index()
+                      [result_df.reset_index()['conditional_volatility_ratio'] == 1.2]
+                      [["T", "conditional_volatility_ratio", "moneyness", "iv_GARCH"]])
 
+    # actual plotting
+    # low vol
+    low_fig_filename = result_filename.split('.')[0] + '_low_cond_vol.png'
+    low_fig_filepath = os.path.join(data_folder, low_fig_filename)
+    fig, ax = plt.subplots(figsize=(8, 6))
+    sns.lineplot(data=iv_df_low_vol,
+                 x="moneyness",
+                 y="iv_GARCH",
+                 hue='T',
+                 ci=None,
+                 ax=ax)
+    ax.set_xlabel('Moneyness')
+    ax.set_ylabel('GARCH Implied Volatility by Black-Scholes formular')
+    plt.savefig(low_fig_filepath, dpi=200)
+    
+    # low vol
+    high_fig_filename = result_filename.split('.')[0] + '_high_cond_vol.png'
+    high_fig_filepath = os.path.join(data_folder, high_fig_filename)
+    fig, ax = plt.subplots(figsize=(8, 6))
+    sns.lineplot(data=iv_df_high_vol,
+                 x="moneyness",
+                 y="iv_GARCH",
+                 hue='T',
+                 ci=None,
+                 ax=ax)
+    ax.set_xlabel('Moneyness')
+    ax.set_ylabel('GARCH Implied Volatility by Black-Scholes formular')
+    plt.savefig(high_fig_filepath, dpi=200)
+    
+    return result_df
+    
+    
 if __name__ == "__main__":
-    a = main()
+    main()

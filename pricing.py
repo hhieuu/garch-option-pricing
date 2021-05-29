@@ -105,7 +105,7 @@ def compute_GARCH_delta(sim_price_array,
 
 
 # Black Scholes formula
-# @jit(nopython=True)
+@jit(nopython=True)
 def compute_d_t(sigma_sq,
                 current_price,
                 strike_price,
