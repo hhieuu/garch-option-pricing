@@ -95,7 +95,7 @@ def compare(theta_hat,
         "delta_GARCH": GARCH_call_delta,
         "delta_bias_mean": delta_bias_percent_mean,
         "delta_bias_std": delta_bias_percent_std,
-        "iv_GARCH": np.sqrt(GARCH_iv)
+        "iv_GARCH": np.sqrt(GARCH_iv * 365)
     }
     
     return result
@@ -103,7 +103,7 @@ def compare(theta_hat,
 
 def main():
     # get data, using BMW data
-    data_path = 'data/dax_data.csv'
+    data_path = 'data/BMW.csv'
     price_df = pd.read_csv(data_path,
                            sep=';',
                            decimal=',',
@@ -135,7 +135,7 @@ def main():
     # set up context for comparison
     t = 0 # current time wrt call option creation date
     T_comp = (30, 90, 180) # option lengths
-    moneyness_comp = np.arange(0.7, 1.3, 0.002) # asset price at T / strike price
+    moneyness_comp = np.arange(0.7, 1.3, 0.001) # asset price at T / strike price
     volatility_ratio = (0.8, 1.0, 1.2) # sqrt(h_t) / stationary sigma
     settings = []
     for _T in T_comp:
@@ -203,7 +203,7 @@ def main():
                  ci=None,
                  ax=ax)
     ax.set_xlabel('Moneyness')
-    ax.set_ylabel('GARCH Implied Volatility by Black-Scholes formular')
+    ax.set_ylabel('GARCH Implied Volatility by Black-Scholes formula')
     plt.savefig(low_fig_filepath, dpi=200)
     
     # low vol
@@ -217,7 +217,7 @@ def main():
                  ci=None,
                  ax=ax)
     ax.set_xlabel('Moneyness')
-    ax.set_ylabel('GARCH Implied Volatility by Black-Scholes formular')
+    ax.set_ylabel('GARCH Implied Volatility by Black-Scholes formula')
     plt.savefig(high_fig_filepath, dpi=200)
     
     return result_df

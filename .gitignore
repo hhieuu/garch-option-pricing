@@ -2,3 +2,10 @@
 *.pyc
 .*
 !.gitignore
+*.aux
+*.bbl
+*.blg
+*.log
+*.synctex.gz
+*.tex
+*.toc
